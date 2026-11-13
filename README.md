@@ -114,3 +114,4 @@ Copy-Item ".\MCORE-AutoBoot.ps1" "C:\Scripts\MCORE-AutoBoot.ps1" -Force
 ## Detailed Documentation
 
 See **[docs/ARCHITECTURE_AND_VERIFICATION.md](docs/ARCHITECTURE_AND_VERIFICATION.md)** for full packet-level explanations, escape-hatch commands, and cold-boot verification steps.
+- **[docs/VERTEX_AI_IDENTITY_ARCHITECTURE.md](docs/VERTEX_AI_IDENTITY_ARCHITECTURE.md)** — Verified two-server Vertex AI IAM, ADC isolation, Python 3.14 runtime, and audit report.
