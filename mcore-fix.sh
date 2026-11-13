@@ -58,4 +58,5 @@ exec ip netns exec mcore-ns "$@"
 WRAP
 chmod +x /usr/local/bin/mcore-ns
 
+/usr/local/bin/mcore-services.sh
 echo "✅ Namespace '$NS' ready on $TARGET_IP (Host/Debian13: $HOST_IP)"
