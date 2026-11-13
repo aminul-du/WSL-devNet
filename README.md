@@ -6,7 +6,7 @@ Dynamic dual-distro **WSL2 network isolation and static/offset IP routing** for 
 
 ## Network Architecture
 
-WSL2 shares a single lightweight Linux kernel and virtual network adapter (`eth0`) across all installed distributions. This setup isolates **UbuntuPro** inside a dedicated Linux network namespace (`mcore-ns`) and automatically assigns it `WSL_IP + 1` (e.g., `172.23.180.161` while **Debian13** remains untouched on `172.23.180.160`).
+WSL2 shares a single lightweight Linux kernel and virtual network adapter (`eth0`) across all installed distributions. This setup isolates **UbuntuPro** inside a dedicated Linux network namespace (`mcore-ns`) and automatically assigns it `WSL_IP + 1` (e.g., `172.23.180.161`), leaving **Debian13** untouched on the primary WSL2 IP (`172.23.180.160`).
 
 ```text
 MCore Windows Host
@@ -20,29 +20,27 @@ MCore Windows Host
 
 ---
 
-## Repository Files
+## Repository Contents
 
 | File | Target Location | Purpose |
 | :--- | :--- | :--- |
-| **`mcore-fix.sh`** | `/usr/local/bin/mcore-fix.sh` | Dynamically detects `eth0`, calculates `WSL_IP + 1`, builds `mcore-ns` with a `/32` host IP, configures DNS, and applies scoped `MASQUERADE` NAT rules. |
-| **`MCORE-AutoBoot.ps1`** | `C:\Scripts\MCORE-AutoBoot.ps1` | Triggers `mcore-fix.sh` at boot and maps the Windows `/32` route (`TARGET_IP` → `WSL_IP`). |
-| **`Install-MCORE-Task.ps1`** | Run once in Admin PowerShell | Registers `MCORE-AutoBoot.ps1` in **Windows Task Scheduler** with Highest Privileges for silent background execution (no UAC prompt). |
+| **`mcore-fix.sh`** | `/usr/local/bin/mcore-fix.sh` | Dynamically detects `eth0`, calculates `WSL_IP + 1`, creates `mcore-ns`, configures DNS, applies scoped `MASQUERADE` NAT rules, and triggers `mcore-services.sh`. |
+| **`mcore-services.sh`** | `/usr/local/bin/mcore-services.sh` | Hook executed inside `mcore-ns` to auto-start services (e.g., Rust engine, EduVerse app) on `172.23.180.161`. |
+| **`enable-auto-ns-shell.sh`** | Run once inside `UbuntuPro` | Configures `~/.bashrc` and `/root/.bashrc` so opening `UbuntuPro` automatically enters `mcore-ns` (`172.23.180.161`) with self-healing if opened early after a PC reboot. |
+| **`MCORE-AutoBoot.ps1`** | `C:\Scripts\MCORE-AutoBoot.ps1` | Initializes `mcore-ns` at Windows startup, maps the Windows `/32` host route (`TARGET_IP` → `WSL_IP`), and configures external LAN port forwarding. |
+| **`Install-MCORE-Task.ps1`** | Run once in Admin PowerShell | Registers `MCORE-AutoBoot.ps1` in **Windows Task Scheduler** with Highest Privileges for silent background startup (no UAC prompt). |
 
 ---
 
-## Daily Usage & Verification
+## Quick Verification
 
 ### Inside `UbuntuPro`
+Opening `UbuntuPro` drops you directly into `mcore-ns`:
 ```bash
-# Enter an interactive shell inside the isolated namespace
-mcore
-
-# Check the active isolated IP
-mcore-ip
-
-# Run a single command inside mcore-ns
-mcore-ns git push origin main
+ip a          # Shows veth1 with 172.23.180.161/32
+mcore-ip      # Prints active isolated target IP
 ```
+*(Escape hatch to root WSL2 namespace if ever needed: `MCORE_NO_NS=1 bash`)*
 
 ### From Windows PowerShell
 ```powershell
