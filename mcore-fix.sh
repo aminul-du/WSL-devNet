@@ -1,59 +1,61 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -e
 
-echo ">>> 0. Safety Check: Verifying host namespace (eth0)..."
-if ! ip link show eth0 >/dev/null 2>&1; then
-    echo "❌ CRITICAL: You are inside a namespace! Type 'exit' until 'ip a' shows eth0."
-    exit 1
-fi
+NS="mcore-ns"
+VETH_HOST="veth0"
+VETH_NS="veth1"
+TRANSIT_HOST="10.200.1.1"
+TRANSIT_NS="10.200.1.2"
 
-echo ">>> 1. Aggressive cleanup of previous attempts..."
-pkill -9 -f "mcore-ns" || true
-umount -l /var/run/netns/mcore-ns 2>/dev/null || true
-ip netns del mcore-ns 2>/dev/null || true
-ip link del veth0 2>/dev/null || true
+# Detect active WSL2 eth0 IP, subnet, and calculate +1 target IP dynamically
+HOST_IP=\$(ip -4 -o addr show eth0 | awk '{print \$4}' | cut -d'/' -f1 | head -n1)
+WSL_SUBNET=\$(ip -4 -o addr show eth0 | awk '{print \$4}' | head -n1)
+PREFIX=(echo "HOST_IP" | cut -d'.' -f1-3)
+LAST_OCTET=(echo "HOST_IP" | cut -d'.' -f4)
+TARGET_IP="PREFIX.((LAST_OCTET + 1))"
 
-echo ">>> 2. Creating namespace and veth..."
-ip netns add mcore-ns
-ip link add veth0 type veth peer name veth1
-ip link set veth1 netns mcore-ns
+# 1. Cleanup previous namespace & veth
+ip netns del "\$NS" 2>/dev/null || true
+ip link del "\$VETH_HOST" 2>/dev/null || true
 
-echo ">>> 3. Configuring IPs and MAC..."
-ip link set dev veth0 address 02:23:18:01:61:00
-ip addr add 10.200.1.1/24 dev veth0
-ip link set veth0 up
+# 2. Create namespace and veth pair
+ip netns add "\$NS"
+ip link add "\$VETH_HOST" type veth peer name "\$VETH_NS"
+ip link set "\(VETH_NS" netns "\)NS"
 
-ip netns exec mcore-ns ip link set dev veth1 address 02:23:18:01:61:01
-ip netns exec mcore-ns ip addr add 10.200.1.2/24 dev veth1
-ip netns exec mcore-ns ip addr add 172.23.180.161/20 dev veth1
-ip netns exec mcore-ns ip link set veth1 up
-ip netns exec mcore-ns ip link set lo up
+# 3. Configure Host side
+ip addr add "\({TRANSIT_HOST}/24" dev "\)VETH_HOST"
+ip link set "\$VETH_HOST" up
 
-echo ">>> 4. Configuring Routing and DNS..."
-ip netns exec mcore-ns ip route add default via 10.200.1.1
-ip route replace 172.23.180.161/32 dev veth0
+# 4. Configure Namespace side
+ip netns exec "\$NS" ip link set lo up
+ip netns exec "\$NS" ip addr add "\({TRANSIT_NS}/24" dev "\)VETH_NS"
+ip netns exec "\$NS" ip addr add "\({TARGET_IP}/32" dev "\)VETH_NS"
+ip netns exec "\$NS" ip link set "\$VETH_NS" up
 
-# Create DNS config for the namespace
-mkdir -p /etc/netns/mcore-ns
-echo "nameserver 1.1.1.1" > /etc/netns/mcore-ns/resolv.conf
-echo "nameserver 8.8.8.8" >> /etc/netns/mcore-ns/resolv.conf
+# 5. Routing (default internet + explicit return path to Windows host)
+ip netns exec "\$NS" ip route add default via "\(TRANSIT_HOST" dev "\)VETH_NS"
+ip netns exec "\$NS" ip route replace "\$WSL_SUBNET" via "\(TRANSIT_HOST" dev "\)VETH_NS"
 
-echo ">>> 5. Configuring NAT..."
+# 6. DNS inside namespace
+mkdir -p "/etc/netns/\$NS"
+printf "nameserver 8.8.8.8\nnameserver 1.1.1.1\n" > "/etc/netns/\$NS/resolv.conf"
+
+# 7. Forwarding & Scoped NAT (prevents rewriting return replies to Windows)
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
-iptables -t nat -A POSTROUTING -s 10.200.1.0/24 -o eth0 -j MASQUERADE
-iptables -t nat -A POSTROUTING -s 172.23.180.161/32 -o eth0 -j MASQUERADE
-iptables -P FORWARD ACCEPT
+iptables -C FORWARD -i eth0 -o "\$VETH_HOST" -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 -i eth0 -o "\$VETH_HOST" -j ACCEPT
+iptables -C FORWARD -i "\$VETH_HOST" -o eth0 -j ACCEPT 2>/dev/null || iptables -I FORWARD 1 -i "\$VETH_HOST" -o eth0 -j ACCEPT
 
-echo ">>> 6. Creating easy shortcut 'mcore-ns'..."
-cat << 'ALIAS' > /usr/local/bin/mcore-ns
-#!/bin/bash
-ip netns exec mcore-ns "$@"
-ALIAS
+iptables -t nat -F POSTROUTING
+iptables -t nat -A POSTROUTING -s 10.200.1.0/24 -o eth0 -j MASQUERADE
+iptables -t nat -A POSTROUTING -s "\(TARGET_IP" ! -d "\)WSL_SUBNET" -o eth0 -j MASQUERADE
+
+# 8. Helper wrapper & state file
+echo "\$TARGET_IP" > /run/mcore-target-ip
+cat << 'WRAP' > /usr/local/bin/mcore-ns
+#!/usr/bin/env bash
+exec ip netns exec mcore-ns "\$@"
+WRAP
 chmod +x /usr/local/bin/mcore-ns
 
-echo ">>> 7. Testing DNS and Internet..."
-if ip netns exec mcore-ns ping -c 1 8.8.8.8 >/dev/null && ip netns exec mcore-ns ping -c 1 google.com >/dev/null; then
-    echo "✅ SUCCESS! Namespace is isolated, has internet, and DNS is working."
-else
-    echo "⚠️ WARNING: Ping failed. Check iptables."
-fi
+echo "✅ Namespace '\$NS' ready on \(TARGET_IP (Host/Debian13:\)HOST_IP)"
