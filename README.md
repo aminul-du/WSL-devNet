@@ -47,3 +47,9 @@ mcore-ip      # Prints active isolated target IP
 ping 172.23.180.160   # Debian13 (TTL=64)
 ping 172.23.180.161   # UbuntuPro mcore-ns (TTL=63)
 ```
+
+---
+
+## Detailed Documentation
+
+See **[docs/ARCHITECTURE_AND_VERIFICATION.md](docs/ARCHITECTURE_AND_VERIFICATION.md)** for the full topology diagram, confirmed system behavior, file reference table, and cold-boot verification guide.
