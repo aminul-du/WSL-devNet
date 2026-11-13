@@ -1,72 +1,75 @@
-# WSL-devNet: Architecture, Auto-Boot & Verification Guide
+# Architecture, Startup Lifecycle & Verification Guide
 
-Complete technical reference for running **Debian13** (`172.23.180.160`) and **UbuntuPro** (`172.23.180.161`) concurrently on a Windows WSL2 host with full network isolation, automatic namespace entry, and reboot-safe recovery.
+Technical deep-dive for **WSL-devNet**: running **Debian13** (`172.23.180.160`) and **UbuntuPro** (`172.23.180.161`) concurrently on Windows WSL2 with complete network isolation, automatic shell entry, and zero-touch cold-boot recovery.
 
 ---
 
-## 1. Confirmed Network Topology
+## 1. Packet Flow & NAT Isolation Diagram
 
-WSL2 shares one lightweight Linux kernel and primary virtual network adapter (`eth0`) across all installed distributions. By isolating **UbuntuPro** inside a dedicated Linux network namespace (`mcore-ns`), both distributions maintain independent IP addresses and port bindings without conflict.
+```mermaid
+flowchart LR
+    subgraph Windows["🪟 Windows Host (172.23.176.1)"]
+        AppWin["Host App / Browser / Ping"]
+        RouteTable["Route: 172.23.180.161/32 ➔ 172.23.180.160"]
+    end
 
-```text
-MCore Windows Host (172.23.176.1)
-│
-├── Debian13 (WSL2 Root Namespace)
-│   └── 172.23.180.160  [Default WSL2 Interface — Unchanged, TTL=64]
-│
-└── UbuntuPro (Isolated Namespace: mcore-ns)
-    └── 172.23.180.161  [Target IP via 10.200.1.0/24 veth Transit, TTL=63]
+    subgraph RootNS["🐧 WSL2 Root Namespace"]
+        Eth0["eth0: 172.23.180.160/20"]
+        NAT["iptables POSTROUTING<br/>MASQUERADE ! -d 172.23.176.0/20"]
+        Veth0["veth0: 10.200.1.1/24"]
+    end
+
+    subgraph MCoreNS["🔒 mcore-ns (UbuntuPro)"]
+        Veth1["veth1: 10.200.1.2/24 & 172.23.180.161/32"]
+        NSRoute["Route: 172.23.176.0/20 via 10.200.1.1"]
+    end
+
+    AppWin --> RouteTable --> Eth0 --> Veth0 --> Veth1
+    Veth1 --> NSRoute --> Veth0 --> NAT --> Eth0 --> AppWin
 ```
 
----
-
-## 2. Confirmed System Behavior
-
-* **Automatic Namespace Entry:** Opening `UbuntuPro` from Windows Terminal—even immediately after a PC reboot—automatically enters `mcore-ns` and lands directly on **`172.23.180.161/32`** (`veth1`).
-* **Self-Healing Startup:** If `UbuntuPro` is opened before the 15-second Windows Task Scheduler delay completes, `~/.bashrc` automatically triggers `/usr/local/bin/mcore-fix.sh` before entering the namespace.
-* **Transparent Tooling:** Because the interactive shell already runs inside `mcore-ns`, commands like `git`, `curl`, `ssh`, and application servers bind directly to `172.23.180.161` without requiring manual `mcore-ns` prefixes.
-* **Complete Dual-Distro Separation:** `Debian13` remains completely unaffected on `172.23.180.160`.
+### Why Scoped NAT (`! -d $WSL_SUBNET`) Is Essential
+1. **Explicit Return Gateway:** Linux normally creates an on-link route for `172.23.176.0/20` when an IP in that range is assigned. Replacing it with `via 10.200.1.1 dev veth1` forces return packets through the `veth` bridge rather than failing ARP inside the isolated namespace.
+2. **Source IP Preservation:** Excluding `$WSL_SUBNET` from `MASQUERADE` ensures packets returning to Windows (`172.23.176.1`) retain `172.23.180.161` as their source IP instead of being rewritten to `172.23.180.160`.
 
 ---
 
-## 3. Repository File Reference
+## 2. Confirmed Production Behavior
 
-| File | System Location | Role |
-| :--- | :--- | :--- |
-| **`mcore-fix.sh`** | `/usr/local/bin/mcore-fix.sh` | Detects `eth0`, calculates `WSL_IP + 1` (`172.23.180.161`), builds `mcore-ns` and `veth0`/`veth1`, sets DNS, applies scoped `MASQUERADE` NAT, and runs `mcore-services.sh`. |
-| **`mcore-services.sh`** | `/usr/local/bin/mcore-services.sh` | Service hook executed inside `mcore-ns` on initialization to launch background services (e.g., Rust engine, EduVerse app). |
-| **`enable-auto-ns-shell.sh`** | Run once in `UbuntuPro` | Configures `/root/.bashrc` and `~/.bashrc` to auto-enter `mcore-ns` on interactive shell startup with loop protection and `MCORE_NO_NS=1` escape hatch. |
-| **`MCORE-AutoBoot.ps1`** | `C:\Scripts\MCORE-AutoBoot.ps1` | Initializes `mcore-ns` on Windows boot, maps the Windows `/32` host route (`TARGET_IP` → `WSL_IP`), and configures LAN `portproxy` and firewall rules. |
-| **`Install-MCORE-Task.ps1`** | Run once in Admin PowerShell | Registers `MCORE-AutoBoot.ps1` in **Windows Task Scheduler** with Highest Privileges at user logon (silent startup, no UAC prompt). |
+* **Automatic Namespace Entry:** Opening `UbuntuPro` in Windows Terminal—including right after a PC reboot—automatically enters `mcore-ns` and lands on **`172.23.180.161/32`** (`veth1`).
+* **Self-Healing Early Boot:** If `UbuntuPro` is launched before the 15-second Task Scheduler delay completes, `/root/.bashrc` and `~/.bashrc` detect the missing namespace and execute `/usr/local/bin/mcore-fix.sh` automatically.
+* **Transparent Developer Tooling:** `git`, `ssh`, `curl`, Rust binaries, and Node/web servers run directly on `172.23.180.161` without requiring `ip netns exec` prefixes.
+* **Zero Interference with Debian13:** `Debian13` remains untouched on `172.23.180.160/20` (`TTL=64`).
 
 ---
 
-## 4. Verification & Troubleshooting Commands
+## 3. Verification & Cold-Boot Test Commands
 
 ### Inside `UbuntuPro` (Auto-Entered `mcore-ns`)
 ```bash
-# Confirm veth1 holds 172.23.180.161/32
+# 1. Confirm veth1 holds 172.23.180.161/32
 ip a
 
-# Print active isolated target IP
+# 2. Check dynamic target IP file
 mcore-ip
 
-# Test outbound internet & DNS through 172.23.180.161
+# 3. Verify external internet & DNS resolution
 curl -I https://github.com
 
-# Escape hatch: open a shell in the root WSL2 namespace (172.23.180.160)
+# 4. Escape hatch to root WSL2 namespace (172.23.180.160) if needed
 MCORE_NO_NS=1 bash
 ```
 
-### From Windows PowerShell
+### From Windows PowerShell (Cold-Boot Recovery Test)
 ```powershell
-# Verify both distributions respond independently
-ping 172.23.180.160   # Debian13 (TTL=64)
-ping 172.23.180.161   # UbuntuPro mcore-ns (TTL=63)
-
-# Simulate a full cold-boot recovery test
+# 1. Shut down WSL2 VM completely (resets namespaces and dynamic IPs)
 wsl --shutdown
+
+# 2. Trigger silent background startup task
 Start-ScheduledTask -TaskName "MCORE-AutoBoot"
 Start-Sleep -Seconds 20
-ping -n 2 172.23.180.161
+
+# 3. Verify both distributions respond with distinct TTLs
+ping -n 2 172.23.180.160   # Debian13 (TTL=64)
+ping -n 2 172.23.180.161   # UbuntuPro mcore-ns (TTL=63)
 ```
