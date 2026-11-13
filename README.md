@@ -1,5 +1,7 @@
 # WSL-devNet
 
+![Shell](https://shields.io) ![PowerShell](https://shields.io) ![WSL2](https://shields.io)
+
 **Enterprise-grade dual-distro WSL2 network isolation, dynamic IP offset routing (`WSL_IP + 1`), and zero-touch cold-boot recovery.**
 
 Run multiple WSL2 Linux distributions concurrently on a single Windows host with **distinct, dedicated IP addresses**, isolated port spaces, automatic shell entry, and native LAN forwarding—without modifying the primary WSL2 distribution.
