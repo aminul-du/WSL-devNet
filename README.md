@@ -22,10 +22,11 @@ MCore Windows Host (172.23.176.1)
 
 ## Repository Files
 
-| File | Location | Purpose |
+| File | Target Location | Purpose |
 | :--- | :--- | :--- |
 | **`mcore-fix.sh`** | `/usr/local/bin/mcore-fix.sh` | Creates the `mcore-ns` network namespace, configures the `veth` pair (`10.200.1.1` ↔ `10.200.1.2`), assigns `172.23.180.161`, sets up DNS, and enables outbound NAT. |
-| **`MCORE-AutoBoot.ps1`** | `C:\Scripts\MCORE-AutoBoot.ps1` | Runs on Windows startup to initialize `mcore-ns`, dynamically detect the WSL2 subnet, configure return routing and `MASQUERADE` exclusions, and map the Windows host route (`172.23.180.161` → dynamic WSL IP). |
+| **`MCORE-AutoBoot.ps1`** | `C:\Scripts\MCORE-AutoBoot.ps1` | Initializes `mcore-ns` at boot, dynamically detects the WSL2 subnet, fixes return routing and `MASQUERADE` exclusions, and maps the Windows `/32` host route (`172.23.180.161` → dynamic WSL IP). |
+| **`Install-MCORE-Task.ps1`** | Run once in Admin PowerShell | Registers `MCORE-AutoBoot.ps1` in **Windows Task Scheduler** with Highest Privileges at user logon for silent background execution without UAC prompts. |
 
 ---
 
@@ -37,7 +38,7 @@ MCore Windows Host (172.23.176.1)
 
 ---
 
-## Daily Usage & Verification
+## Daily Usage & Cold-Boot Verification
 
 ### Run Commands Inside `UbuntuPro` (`172.23.180.161`)
 ```bash
@@ -49,8 +50,12 @@ mcore-ns git push origin main
 sudo ip netns exec mcore-ns su - \$USER
 ```
 
-### Verify Connectivity from Windows PowerShell
+### Verify Connectivity & Cold-Boot Recovery (PowerShell)
 ```powershell
+wsl --shutdown
+Start-ScheduledTask -TaskName "MCORE-AutoBoot"
+Start-Sleep -Seconds 20
+
 ping 172.23.180.160   # Debian13 (TTL=64)
 ping 172.23.180.161   # UbuntuPro mcore-ns (TTL=63)
 ```
