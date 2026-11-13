@@ -14,7 +14,7 @@ if ($WSL_IP -and $TARGET_IP) {
 }
 
 # 4. Forward external LAN ports to UbuntuPro mcore-ns ($TARGET_IP)
-$PortsToExpose = @(8080, 3000)
+$PortsToExpose = @(3000, 3001, 3002)
 if ($TARGET_IP) {
     foreach ($Port in $PortsToExpose) {
         netsh interface portproxy delete v4tov4 listenport=$Port listenaddress=0.0.0.0 2>$null | Out-Null
