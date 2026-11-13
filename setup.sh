@@ -15,4 +15,4 @@ sudo ./enable-auto-ns-shell.sh
 # Initialize namespace immediately
 sudo /usr/local/bin/mcore-fix.sh
 
-echo "✅ Linux deployment complete! Active isolated IP: \$(cat /run/mcore-target-ip)"
+echo "✅ Linux deployment complete! Active isolated IP: $(cat /run/mcore-target-ip)"
