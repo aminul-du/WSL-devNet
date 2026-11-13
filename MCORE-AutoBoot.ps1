@@ -12,3 +12,16 @@ if ($WSL_IP -and $TARGET_IP) {
     route delete $TARGET_IP 2>$null | Out-Null
     route add $TARGET_IP mask 255.255.255.255 $WSL_IP -p | Out-Null
 }
+
+# 4. Forward external LAN ports to UbuntuPro mcore-ns ($TARGET_IP)
+$PortsToExpose = @(8080, 3000)
+if ($TARGET_IP) {
+    foreach ($Port in $PortsToExpose) {
+        netsh interface portproxy delete v4tov4 listenport=$Port listenaddress=0.0.0.0 2>$null | Out-Null
+        netsh interface portproxy add v4tov4 listenport=$Port listenaddress=0.0.0.0 connectport=$Port connectaddress=$TARGET_IP | Out-Null
+
+        if (-not (Get-NetFirewallRule -DisplayName "MCORE-LAN-$Port" -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -DisplayName "MCORE-LAN-$Port" -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow | Out-Null
+        }
+    }
+}
