@@ -4,7 +4,6 @@ set -e
 mkdir -p /var/log/mcore
 chown -R mcoreai:mcoreai /var/log/mcore
 
-# Stop any previous Next.js instances cleanly before starting
 pkill -f "next-server" 2>/dev/null || true
 pkill -f "next dev" 2>/dev/null || true
 pkill -f "next start" 2>/dev/null || true
@@ -20,7 +19,6 @@ start_next_app() {
         return
     fi
 
-    # Use production 'start' if built (.next/BUILD_ID exists), otherwise fall back to 'dev'
     local MODE="dev"
     if [ -f "${APP_DIR}/.next/BUILD_ID" ]; then
         MODE="start"
